@@ -1,0 +1,427 @@
+"""Comprehensive tests for RSS collector module"""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import aiohttp
+import pytest
+
+from ai_news_agent.collectors.rss import RSSCollector
+from ai_news_agent.config import settings
+from ai_news_agent.models import NewsItem
+
+from .fixtures.rss_samples import (
+    ANTHROPIC_RSS,
+    ARXIV_RSS,
+    DUPLICATE_RSS,
+    EMPTY_RSS,
+    MALFORMED_RSS,
+    OLD_ARTICLE_RSS,
+    OPENAI_RSS,
+    TECHCRUNCH_RSS,
+    VERGE_RSS,
+)
+
+
+def create_mock_session(response_mapping):
+    """Create a properly mocked aiohttp session
+
+    Args:
+        response_mapping: Dict or callable that maps URLs to MockResponse objects
+    """
+    mock_session_instance = MagicMock()
+
+    if callable(response_mapping):
+        mock_get = AsyncMock(side_effect=response_mapping)
+    else:
+        # Single response
+        mock_get = AsyncMock(return_value=response_mapping)
+
+    mock_session_instance.get = mock_get
+    return mock_session_instance
+
+
+class MockResponse:
+    """Mock aiohttp response"""
+
+    def __init__(self, text: str, status: int = 200):
+        self._text = text
+        self.status = status
+
+    async def text(self) -> str:
+        return self._text
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_collector_parses_valid_techcrunch_feed():
+    """Should parse TechCrunch RSS feed and return NewsItem objects"""
+    collector = RSSCollector()
+
+    with patch("aiohttp.ClientSession") as mock_session_class:
+        mock_session_class.return_value.__aenter__.return_value = create_mock_session(
+            MockResponse(TECHCRUNCH_RSS)
+        )
+
+        items = await collector.collect()
+
+        assert len(items) == 2
+        assert all(isinstance(item, NewsItem) for item in items)
+
+        # Check first item
+        assert (
+            items[0].title
+            == "OpenAI launches new GPT-5 model with enhanced capabilities"
+        )
+        assert (
+            str(items[0].url) == "https://techcrunch.com/2024/01/15/openai-gpt5-launch/"
+        )
+        assert items[0].source == "TechCrunch AI"
+        assert "OpenAI has announced" in items[0].content
+        assert items[0].published_at.year == 2024
+
+
+@pytest.mark.asyncio
+async def test_collector_parses_arxiv_special_format():
+    """Should handle ArXiv's unique RSS structure with dc:creator tags"""
+    collector = RSSCollector()
+
+    # Mock only the ArXiv feed
+    feeds_config = [{"url": "https://arxiv.org/rss/cs.AI", "name": "ArXiv AI Papers"}]
+
+    with patch.object(settings, "rss_feeds", feeds_config):
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_session_class.return_value.__aenter__.return_value = (
+                create_mock_session(MockResponse(ARXIV_RSS))
+            )
+
+            items = await collector.collect()
+
+            assert len(items) == 2
+            assert (
+                items[0].title
+                == "Efficient Transformer Architecture for Large Language Models"
+            )
+            assert str(items[0].url) == "http://arxiv.org/abs/2401.12345"
+            assert items[0].source == "ArXiv AI Papers"
+            # ArXiv uses dc:creator which should be in metadata
+            assert "John Doe" in items[0].metadata.get("authors", "")
+
+
+@pytest.mark.asyncio
+async def test_collector_filters_old_articles():
+    """Should skip articles older than max_age_days"""
+    collector = RSSCollector()
+
+    feeds_config = [{"url": "https://example.com/feed", "name": "Test Feed"}]
+
+    with patch.object(settings, "rss_feeds", feeds_config):
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_session_class.return_value.__aenter__.return_value = (
+                create_mock_session(MockResponse(OLD_ARTICLE_RSS))
+            )
+
+            items = await collector.collect()
+
+            # Should only get the recent article, not the old one
+            assert len(items) == 1
+            assert items[0].title == "Recent AI Development"
+
+
+@pytest.mark.asyncio
+async def test_collector_handles_network_errors_with_retry():
+    """Should retry on failure with exponential backoff"""
+    collector = RSSCollector()
+
+    feeds_config = [{"url": "https://example.com/feed", "name": "Test Feed"}]
+
+    with patch.object(settings, "rss_feeds", feeds_config):
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            # Simulate network errors then success
+            mock_session = create_mock_session(
+                lambda *args, **kwargs: [
+                    aiohttp.ClientError("Network error"),
+                    aiohttp.ClientError("Network error"),
+                    MockResponse(TECHCRUNCH_RSS),  # Success on third try
+                ][mock_session.get.call_count - 1]
+            )
+            mock_session_class.return_value.__aenter__.return_value = mock_session
+
+            items = await collector.collect()
+
+            # Should eventually succeed and return items
+            assert len(items) == 2
+            assert mock_session.get.call_count == 3  # Initial + 2 retries
+
+
+@pytest.mark.asyncio
+async def test_collector_handles_timeout():
+    """Should handle timeout errors gracefully"""
+    collector = RSSCollector()
+
+    feeds_config = [
+        {"url": "https://example.com/feed1", "name": "Feed 1"},
+        {"url": "https://example.com/feed2", "name": "Feed 2"},
+    ]
+
+    with patch.object(settings, "rss_feeds", feeds_config):
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            # First feed times out, second succeeds
+            async def mock_get_side_effect(url, **kwargs):
+                if "feed1" in url:
+                    raise TimeoutError()
+                return MockResponse(TECHCRUNCH_RSS)
+
+            mock_session_class.return_value.__aenter__.return_value = (
+                create_mock_session(mock_get_side_effect)
+            )
+
+            items = await collector.collect()
+
+            # Should get items from successful feed only
+            assert len(items) == 2
+            assert all(item.source == "Feed 2" for item in items)
+
+
+@pytest.mark.asyncio
+async def test_collector_deduplicates_within_batch():
+    """Should not return duplicate items from same collection"""
+    collector = RSSCollector()
+
+    feeds_config = [{"url": "https://example.com/feed", "name": "Test Feed"}]
+
+    with patch.object(settings, "rss_feeds", feeds_config):
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_session_class.return_value.__aenter__.return_value = (
+                create_mock_session(MockResponse(DUPLICATE_RSS))
+            )
+
+            items = await collector.collect()
+
+            # Should deduplicate identical items
+            assert len(items) == 2  # Not 3
+            titles = [item.title for item in items]
+            assert titles.count("Breaking: Major AI Breakthrough") == 1
+            assert "Different Article" in titles
+
+
+@pytest.mark.asyncio
+async def test_collector_handles_malformed_rss():
+    """Should handle malformed RSS gracefully without crashing"""
+    collector = RSSCollector()
+
+    feeds_config = [
+        {"url": "https://example.com/malformed", "name": "Malformed Feed"},
+        {"url": "https://example.com/good", "name": "Good Feed"},
+    ]
+
+    with patch.object(settings, "rss_feeds", feeds_config):
+        with patch("aiohttp.ClientSession") as mock_session_class:
+
+            async def mock_get_side_effect(url, **kwargs):
+                if "malformed" in url:
+                    return MockResponse(MALFORMED_RSS)
+                return MockResponse(TECHCRUNCH_RSS)
+
+            mock_session_class.return_value.__aenter__.return_value = (
+                create_mock_session(mock_get_side_effect)
+            )
+
+            items = await collector.collect()
+
+            # Should still get items from good feed
+            assert len(items) > 0
+            assert all(item.source == "Good Feed" for item in items)
+
+
+@pytest.mark.asyncio
+async def test_collector_handles_empty_feeds():
+    """Should handle empty RSS feeds gracefully"""
+    collector = RSSCollector()
+
+    feeds_config = [{"url": "https://example.com/empty", "name": "Empty Feed"}]
+
+    with patch.object(settings, "rss_feeds", feeds_config):
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_session_class.return_value.__aenter__.return_value = (
+                create_mock_session(MockResponse(EMPTY_RSS))
+            )
+
+            items = await collector.collect()
+
+            assert len(items) == 0
+
+
+@pytest.mark.asyncio
+async def test_collector_concurrent_fetching():
+    """Should fetch from multiple feeds concurrently"""
+    collector = RSSCollector()
+
+    # Use all configured feeds
+    with patch("aiohttp.ClientSession") as mock_session_class:
+        responses = {
+            "techcrunch": MockResponse(TECHCRUNCH_RSS),
+            "verge": MockResponse(VERGE_RSS),
+            "arxiv": MockResponse(ARXIV_RSS),
+            "openai": MockResponse(OPENAI_RSS),
+            "anthropic": MockResponse(ANTHROPIC_RSS),
+        }
+
+        async def mock_get_side_effect(url, **kwargs):
+            for key, response in responses.items():
+                if key in url.lower():
+                    return response
+            return MockResponse(EMPTY_RSS)
+
+        mock_session_class.return_value.__aenter__.return_value = create_mock_session(
+            mock_get_side_effect
+        )
+
+        items = await collector.collect()
+
+        # Should get items from all feeds
+        sources = {item.source for item in items}
+        assert len(sources) == 5  # All 5 feeds
+        assert len(items) >= 5  # At least one item per feed
+
+
+@pytest.mark.asyncio
+async def test_collector_statistics_tracking():
+    """Should track performance statistics correctly"""
+    collector = RSSCollector()
+
+    feeds_config = [
+        {"url": "https://example.com/feed1", "name": "Feed 1"},
+        {"url": "https://example.com/feed2", "name": "Feed 2"},
+    ]
+
+    with patch.object(settings, "rss_feeds", feeds_config):
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            # First feed fails, second succeeds
+            async def mock_get_side_effect(url, **kwargs):
+                if "feed1" in url:
+                    raise aiohttp.ClientError("Failed")
+                return MockResponse(TECHCRUNCH_RSS)
+
+            mock_session_class.return_value.__aenter__.return_value = (
+                create_mock_session(mock_get_side_effect)
+            )
+
+            await collector.collect()
+            stats = await collector.get_stats()
+
+            assert len(stats) == 2
+
+            # Check Feed 1 stats (failed)
+            feed1_stats = next(s for s in stats if s.source == "Feed 1")
+            assert feed1_stats.failure_count > 0
+            assert feed1_stats.success_count == 0
+            assert feed1_stats.success_rate == 0.0
+            assert feed1_stats.health_status == "unhealthy"
+
+            # Check Feed 2 stats (succeeded)
+            feed2_stats = next(s for s in stats if s.source == "Feed 2")
+            assert feed2_stats.success_count > 0
+            assert feed2_stats.failure_count == 0
+            assert feed2_stats.success_rate == 1.0
+            assert feed2_stats.health_status == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_collector_respects_timeout_setting():
+    """Should respect timeout configuration"""
+    collector = RSSCollector()
+
+    feeds_config = [{"url": "https://example.com/feed", "name": "Test Feed"}]
+
+    with patch.object(settings, "rss_feeds", feeds_config):
+        with patch.object(settings, "request_timeout", 5):  # 5 second timeout
+            with patch("aiohttp.ClientSession") as mock_session_class:
+                mock_session = create_mock_session(MockResponse(TECHCRUNCH_RSS))
+                mock_session_class.return_value.__aenter__.return_value = mock_session
+
+                await collector.collect()
+
+                # Check that timeout was passed to aiohttp
+                mock_session.get.assert_called()
+                call_kwargs = mock_session.get.call_args[1]
+                assert "timeout" in call_kwargs
+
+
+@pytest.mark.asyncio
+async def test_collector_handles_http_errors():
+    """Should handle various HTTP error codes gracefully"""
+    collector = RSSCollector()
+
+    feeds_config = [
+        {"url": "https://example.com/404", "name": "404 Feed"},
+        {"url": "https://example.com/500", "name": "500 Feed"},
+        {"url": "https://example.com/200", "name": "Good Feed"},
+    ]
+
+    with patch.object(settings, "rss_feeds", feeds_config):
+        with patch("aiohttp.ClientSession") as mock_session_class:
+
+            async def mock_get_side_effect(url, **kwargs):
+                if "404" in url:
+                    return MockResponse("Not Found", status=404)
+                elif "500" in url:
+                    return MockResponse("Server Error", status=500)
+                return MockResponse(TECHCRUNCH_RSS, status=200)
+
+            mock_session_class.return_value.__aenter__.return_value = (
+                create_mock_session(mock_get_side_effect)
+            )
+
+            items = await collector.collect()
+
+            # Should only get items from successful feed
+            assert all(item.source == "Good Feed" for item in items)
+            assert len(items) == 2  # From TechCrunch sample
+
+
+@pytest.mark.asyncio
+async def test_collector_validates_required_fields():
+    """Should skip items missing required fields"""
+    collector = RSSCollector()
+
+    # RSS with some items missing required fields
+    invalid_rss = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+        <channel>
+            <title>Test Feed</title>
+            <item>
+                <title>Valid Article</title>
+                <link>https://example.com/valid</link>
+                <pubDate>Mon, 15 Jan 2024 10:00:00 GMT</pubDate>
+            </item>
+            <item>
+                <!-- Missing title -->
+                <link>https://example.com/no-title</link>
+                <pubDate>Mon, 15 Jan 2024 11:00:00 GMT</pubDate>
+            </item>
+            <item>
+                <title>No Link Article</title>
+                <!-- Missing link -->
+                <pubDate>Mon, 15 Jan 2024 12:00:00 GMT</pubDate>
+            </item>
+        </channel>
+    </rss>"""
+
+    feeds_config = [{"url": "https://example.com/feed", "name": "Test Feed"}]
+
+    with patch.object(settings, "rss_feeds", feeds_config):
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_session_class.return_value.__aenter__.return_value = (
+                create_mock_session(MockResponse(invalid_rss))
+            )
+
+            items = await collector.collect()
+
+            # Should only get the valid item
+            assert len(items) == 1
+            assert items[0].title == "Valid Article"

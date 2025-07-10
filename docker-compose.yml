@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  ai-news-agent:
+    build: .
+    container_name: ai-news-agent
+    environment:
+      - AI_NEWS_LOG_LEVEL=INFO
+      - TZ=Europe/Moscow
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    command: ["uv", "run", "ai-news", "serve"]
+
+  # Development services
+  dev:
+    build: .
+    container_name: ai-news-dev
+    volumes:
+      - .:/app
+      - ai-news-uv-cache:/root/.cache/uv
+    environment:
+      - AI_NEWS_LOG_LEVEL=DEBUG
+    working_dir: /app
+    command: ["tail", "-f", "/dev/null"]  # Keep container running
+    profiles: ["dev"]
+
+  # Test runner
+  test:
+    build: .
+    container_name: ai-news-test
+    volumes:
+      - .:/app
+      - ai-news-uv-cache:/root/.cache/uv
+    working_dir: /app
+    command: ["uv", "run", "pytest", "-v"]
+    profiles: ["test"]
+
+volumes:
+  ai-news-uv-cache:
+    name: ai-news-uv-cache

@@ -1,0 +1,93 @@
+[project]
+name = "ai-news-agent"
+version = "0.1.0"
+description = "AI-powered news aggregator with intelligent deduplication"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Vi", email = "vi@example.com"},
+]
+
+dependencies = [
+    "aiohttp>=3.9.0",
+    "feedparser>=6.0.10",
+    "aiosqlite>=0.19.0",
+    "beautifulsoup4>=4.12.0",
+    "rapidfuzz>=3.6.0",
+    "pyyaml>=6.0.1",
+    "python-dateutil>=2.8.2",
+    "loguru>=0.7.2",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "croniter>=2.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.12.0",
+    "ruff>=0.1.9",
+    "mypy>=1.8.0",
+    "pre-commit>=3.6.0",
+]
+mcp = [
+    "mcp>=0.1.0",  # When available
+]
+ai = [
+    "anthropic>=0.8.0",
+    "openai>=1.6.0",
+]
+
+[project.scripts]
+ai-news = "ai_news_agent.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["ai_news_agent"]
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "mypy>=1.16.1",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.2.1",
+    "ruff>=0.12.2",
+]
