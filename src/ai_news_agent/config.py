@@ -76,6 +76,32 @@ class Settings(BaseSettings):
     # Optional: AI APIs (for future)
     anthropic_api_key: str | None = Field(default=None)
     openai_api_key: str | None = Field(default=None)
+    
+    # Scheduler settings
+    scheduler_rss_cron: str = Field(
+        default="0 */6 * * *",  # Every 6 hours
+        description="Cron expression for RSS collection",
+    )
+    scheduler_daily_digest_cron: str = Field(
+        default="0 17 * * *",  # Daily at 17:00 UTC (20:00 MSK)
+        description="Cron expression for daily digest",
+    )
+    scheduler_weekly_digest_cron: str = Field(
+        default="0 8 * * 0",  # Sunday at 08:00 UTC (11:00 MSK)
+        description="Cron expression for weekly digest",
+    )
+    scheduler_cleanup_cron: str = Field(
+        default="0 2 * * 0",  # Sunday at 02:00 UTC
+        description="Cron expression for cleanup tasks",
+    )
+    cleanup_days: int = Field(
+        default=30,
+        description="Days to keep deduplication data",
+    )
+    digest_max_items: int = Field(
+        default=20,
+        description="Maximum items in digest",
+    )
 
     def create_directories(self) -> None:
         """Ensure all required directories exist"""

@@ -27,6 +27,8 @@ dependencies = [
     # Deduplication
     "sentence-transformers>=2.2.0",
     "numpy>=1.24.0",
+    # Scheduler
+    "apscheduler>=3.10.0",
 ]
 
 [project.optional-dependencies]
