@@ -9,7 +9,6 @@ from loguru import logger
 
 from ..config import settings
 from ..models import CollectorStats, NewsItem
-from ..utils.cache import cached
 from ..utils.rate_limiter import ConcurrencyLimiter, RateLimiter
 from .base import BaseCollector
 from .parsers import ArxivParser, StandardParser
@@ -31,10 +30,10 @@ class RSSCollector(BaseCollector):
         """Initialize RSS collector with statistics tracking"""
         self.stats: dict[str, CollectorStats] = {}
         self._init_stats()
-        
+
         # Rate limiting: 2 requests per second per domain, burst of 5
         self.rate_limiter = RateLimiter(rate=2.0, burst=5, per_domain=True)
-        
+
         # Concurrency limiting: max 3 concurrent connections per domain
         self.concurrency_limiter = ConcurrencyLimiter(max_concurrent=3)
 
@@ -119,7 +118,7 @@ class RSSCollector(BaseCollector):
 
                 # Apply rate limiting
                 await self.rate_limiter.acquire(url)
-                
+
                 # Apply concurrency limiting
                 semaphore = await self.concurrency_limiter.acquire(url)
                 async with semaphore:

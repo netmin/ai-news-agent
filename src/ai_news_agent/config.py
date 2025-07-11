@@ -29,6 +29,10 @@ class Settings(BaseSettings):
         default="sqlite+aiosqlite:///./data/news.db",
         description="Database connection URL",
     )
+    database_echo: bool = Field(
+        default=False,
+        description="Echo SQL statements for debugging",
+    )
     data_dir: Path = Field(default=Path("./data"))
     output_dir: Path = Field(default=Path("./output"))
 
