@@ -29,7 +29,7 @@ class RSSCollectorWithStorage(RSSCollector):
     
     def __init__(self, feeds: list[dict] | None = None):
         """Initialize collector with optional feeds list."""
-        super().__init__(feeds)
+        super().__init__()  # RSSCollector doesn't take arguments
         self.dedup_service = DeduplicationService()
 
     async def collect_and_store(self) -> tuple[list[NewsItem], dict]:

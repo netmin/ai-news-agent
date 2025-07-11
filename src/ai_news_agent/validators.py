@@ -87,8 +87,14 @@ class URLValidator:
         # Remove null bytes
         url = url.replace('\x00', '')
 
-        # Normalize slashes
-        url = re.sub(r'/+', '/', url)
+        # Normalize slashes (but preserve double slash after protocol)
+        # Split by :// to preserve protocol slashes
+        if '://' in url:
+            protocol, rest = url.split('://', 1)
+            rest = re.sub(r'/+', '/', rest)
+            url = protocol + '://' + rest
+        else:
+            url = re.sub(r'/+', '/', url)
 
         return url
 
