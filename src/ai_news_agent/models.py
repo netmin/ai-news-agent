@@ -48,10 +48,19 @@ class NewsItem(BaseModel):
         """Clean and deduplicate tags"""
         if not v:
             return []
-        return list(set(tag.lower().strip() for tag in v if tag.strip()))
+        return list({tag.lower().strip() for tag in v if tag.strip()})
 
     model_config = {
-        "json_encoders": {datetime: lambda v: v.isoformat(), HttpUrl: lambda v: str(v)}
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "url": "https://example.com/article",
+                    "title": "AI News Article",
+                    "source": "Example Feed",
+                    "published_at": "2024-01-15T10:00:00Z"
+                }
+            ]
+        }
     }
 
 

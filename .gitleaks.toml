@@ -1,0 +1,49 @@
+# Gitleaks configuration for AI News Agent
+# Prevents accidental commits of secrets
+
+[allowlist]
+description = "Allowlisted files"
+paths = [
+    '''.env.example''',
+    '''tests/fixtures/.*''',
+]
+
+# Custom rules for AI API keys
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API Key"
+regex = '''(?i)(anthropic[_\-\s]?api[_\-\s]?key|ANTHROPIC_API_KEY)\s*[=:]\s*["']?sk-[a-zA-Z0-9]{40,}["']?'''
+tags = ["key", "anthropic"]
+
+[[rules]]
+id = "openai-api-key"
+description = "OpenAI API Key"
+regex = '''(?i)(openai[_\-\s]?api[_\-\s]?key|OPENAI_API_KEY)\s*[=:]\s*["']?sk-[a-zA-Z0-9]{40,}["']?'''
+tags = ["key", "openai"]
+
+# Generic secret patterns
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(api[_\-\s]?key|apikey|api_secret|api[_\-\s]?token)\s*[=:]\s*["']?[a-zA-Z0-9]{32,}["']?'''
+tags = ["key", "generic"]
+
+[[rules]]
+id = "generic-secret"
+description = "Generic Secret"
+regex = '''(?i)(secret|password|passwd|pwd|token|auth)\s*[=:]\s*["']?[a-zA-Z0-9\-_]{16,}["']?'''
+tags = ["secret", "generic"]
+
+# AWS patterns
+[[rules]]
+id = "aws-access-key"
+description = "AWS Access Key"
+regex = '''(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}'''
+tags = ["key", "aws"]
+
+# Private key patterns
+[[rules]]
+id = "private-key"
+description = "Private Key"
+regex = '''-----BEGIN (RSA|DSA|EC|OPENSSH|PGP) PRIVATE KEY-----'''
+tags = ["key", "private"]

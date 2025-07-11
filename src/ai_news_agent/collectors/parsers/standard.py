@@ -37,7 +37,8 @@ class StandardParser(BaseParser):
 
             if feed.bozo:
                 logger.warning(
-                    f"Feed parsing warning for {self.source_name}: {feed.bozo_exception}"
+                    f"Feed parsing warning for {self.source_name}: "
+                    f"{feed.bozo_exception}"
                 )
 
             # Process each entry
